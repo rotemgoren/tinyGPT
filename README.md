@@ -1,1 +1,1 @@
-tiny version of GPT train on small dataset
+tiny version of GPT from scrach. train on small dataset
