@@ -95,11 +95,11 @@ class LayerNorm1D:
     def parameters(self):
         return [self.gamma , self.beta
                 ]
-class Block(nn.Module):
+class TransformerBlock(nn.Module):
     def __init__(self,n_embed,num_heads,block_size,dropout):
         super().__init__()
         head_size = n_embed//num_heads
-        self.sa = MultiHeadAttention(num_heads,head_size,block_size,dropout)
+        self.selfattn = MultiHeadAttention(num_heads,head_size,block_size,dropout)
         self.ffwd = FeedForward(n_embed,dropout)
 
         self.ln1 = nn.LayerNorm(n_embed) #pre layer norm
@@ -107,9 +107,9 @@ class Block(nn.Module):
 
 
     def forward(self,x):
-        x = x + self.sa(self.ln1(x))
-
-        x = x + self.ffwd(self.ln2(x))
+        x = x + self.selfattn(self.ln1(x)) #residual 1
+        x = self.ln2(x)
+        x = x + self.ffwd(x) #residual 2
         return x
 
 class GPTModel(nn.Module):
@@ -120,9 +120,11 @@ class GPTModel(nn.Module):
         self.device = device
         self.block_size = block_size
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
+
+
         self.position_embedding_table = nn.Embedding(block_size,n_embed)
 
-        self.blocks = nn.Sequential(*[Block(n_embed, num_heads ,block_size,dropout) for _ in range(num_layers)])
+        self.blocks = nn.Sequential(*[TransformerBlock(n_embed, num_heads ,block_size,dropout) for _ in range(num_layers)])
 
         self.ln = nn.LayerNorm(n_embed)
 
@@ -163,3 +165,13 @@ class GPTModel(nn.Module):
             # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1)  # (B, T+1)
         return idx
+
+    def pos_encoding(self, t, channels):
+        inv_freq = 1.0 / (
+            10000
+            ** (torch.arange(0, channels, 2, device=self.device).float() / channels)
+        )
+        pos_enc_a = torch.sin(t.repeat(1, channels // 2) * inv_freq)
+        pos_enc_b = torch.cos(t.repeat(1, channels // 2) * inv_freq)
+        pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
+        return pos_enc
