@@ -3,6 +3,24 @@ from torch import nn
 from torch.nn import functional as F
 import math
 
+
+class PositionalEncoding(nn.Module):  #@save
+    """Positional encoding."""
+    def __init__(self, num_hiddens, dropout, max_len=1000):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        # Create a long enough P
+        self.P = torch.zeros((1, max_len, num_hiddens))
+        X = torch.arange(max_len, dtype=torch.float32).reshape(
+            -1, 1) / torch.pow(10000, torch.arange(
+            0, num_hiddens, 2, dtype=torch.float32) / num_hiddens)
+        self.P[:, :, 0::2] = torch.sin(X)
+        self.P[:, :, 1::2] = torch.cos(X)
+
+    def forward(self, X):
+        X = X + self.P[:, :X.shape[1], :].to(X.device)
+        return self.dropout(X)
+
 def new_gelu(x):
     return 0.5 * x * (1.0+torch.tanh(torch.tensor(math.sqrt(2.0/math.pi))) * (x + 0.044715 * torch.pow(x, 3.0)))
 
@@ -121,8 +139,7 @@ class GPTModel(nn.Module):
         self.block_size = block_size
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
 
-
-        self.position_embedding_table = nn.Embedding(block_size,n_embed)
+        self.position_embedding = PositionalEncoding(n_embed, dropout, max_len=block_size) #nn.Embedding(block_size,n_embed)
 
         self.blocks = nn.Sequential(*[TransformerBlock(n_embed, num_heads ,block_size,dropout) for _ in range(num_layers)])
 
@@ -134,8 +151,9 @@ class GPTModel(nn.Module):
         B,T = idx.shape
         # idx and targets are both (B,T) tensor of integers
         token_emb = self.token_embedding_table(idx)  # (B,T,C)
-        pos_emb = self.position_embedding_table(torch.arange(T,device=self.device)) #(T,C)
-        x = token_emb + pos_emb
+        #pos_emb = self.position_embedding_table(torch.arange(T,device=self.device)) #(T,C)
+        #x = token_emb + pos_emb
+        x = self.position_embedding(token_emb)
         x = self.blocks(x)
         x = self.ln(x)
         logits = self.lm_head(x) #(B,T,vocab_size)
@@ -166,12 +184,3 @@ class GPTModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)  # (B, T+1)
         return idx
 
-    def pos_encoding(self, t, channels):
-        inv_freq = 1.0 / (
-            10000
-            ** (torch.arange(0, channels, 2, device=self.device).float() / channels)
-        )
-        pos_enc_a = torch.sin(t.repeat(1, channels // 2) * inv_freq)
-        pos_enc_b = torch.cos(t.repeat(1, channels // 2) * inv_freq)
-        pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
-        return pos_enc
